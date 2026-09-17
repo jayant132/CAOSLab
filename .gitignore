@@ -1,2 +1,7 @@
-chaoslab/backend/.env
-chaoslab/frontend/chaoslab_flutter/.env
+backend/.env
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+frontend/chaoslab_flutter/.env
+frontend/chaoslab_flutter/build/
+frontend/chaoslab_flutter/.dart_tool/
