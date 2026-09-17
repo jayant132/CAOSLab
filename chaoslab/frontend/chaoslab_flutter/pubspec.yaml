@@ -1,0 +1,38 @@
+name: chaoslab_flutter
+description: >
+  ChaosLab — AI-powered scalability & resilience simulation platform.
+  Flutter client (MVVM) for the ChaosLab FastAPI + LangGraph backend.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Networking
+  dio: ^5.4.3+1
+
+  # MVVM state management: ViewModels extend ChangeNotifier, Views listen
+  # via provider. Deliberately not Bloc/Riverpod for this project — plain
+  # ChangeNotifier keeps the MVVM boundary explicit and easy to explain.
+  provider: ^6.1.2
+
+  # Number/date formatting (e.g. "1,000,000 users")
+  intl: ^0.19.0
+
+  # Env-style build-time config (--dart-define friendly), simple .env support
+  flutter_dotenv: ^5.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
