@@ -17,13 +17,13 @@ from app.models.schemas import ArchitectureGraph, ComponentMetric, FailureScenar
 # declare explicit cpu/memory limits in its compose file. Units: concurrent
 # requests a single instance can comfortably serve before saturating.
 _ROLE_BASELINE_CAPACITY = {
-    "api": 500,
-    "gateway": 2000,
-    "cache": 5000,
-    "queue": 3000,
-    "database": 300,
-    "search": 400,
-    "unknown": 500,
+    "api": 1500,
+    "gateway": 4000,
+    "cache": 8000,
+    "queue": 5000,
+    "database": 2500,
+    "search": 1200,
+    "unknown": 1500,
 }
 
 # Rough fraction of total concurrent users that actually hit a given role
