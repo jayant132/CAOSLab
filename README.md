@@ -1,177 +1,625 @@
 # ChaosLab
 
-**AI-powered scalability & resilience simulation platform.**
+### AI-Powered Scalability & Resilience Simulation Platform
 
-> Paste a GitHub repository and a target scenario — e.g. *"what happens if
-> traffic goes from 100K to 10M users?"* — and ChaosLab reconstructs the
-> system's architecture, runs a deterministic capacity simulation against
-> it, and uses a multi-agent LangGraph pipeline to identify the most likely
-> breaking point and what to do about it.
+ChaosLab is an AI-powered engineering platform that analyzes a GitHub repository, reconstructs its service architecture, simulates scalability and failure scenarios, and uses a multi-agent reasoning pipeline to identify potential bottlenecks and recommend remediation strategies.
 
-![status](https://img.shields.io/badge/status-active-3ECF8E)
-![backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20LangGraph-4FD1C5)
-![frontend](https://img.shields.io/badge/frontend-Flutter%20(MVVM)-4FD1C5)
-![license](https://img.shields.io/badge/license-MIT-8C9BB0)
+> **Give ChaosLab a public GitHub repository and a scenario such as *"What happens if traffic increases from 100K to 10M users?"* — it reconstructs the architecture, runs a deterministic capacity simulation, investigates the highest-risk component, and generates an evidence-backed remediation report.**
+
+![Status](https://img.shields.io/badge/status-active-3ECF8E)
+![Backend](https://img.shields.io/badge/backend-FastAPI%20%7C%20LangGraph-4FD1C5)
+![AI](https://img.shields.io/badge/AI-Groq%20%7C%20Llama%203.3-8C9BB0)
+![Frontend](https://img.shields.io/badge/frontend-Flutter%20%7C%20MVVM-4FD1C5)
+![Streaming](https://img.shields.io/badge/streaming-SSE-8C9BB0)
+![License](https://img.shields.io/badge/license-MIT-8C9BB0)
 
 ---
 
-## What it does
+## Overview
 
-1. **You give it a public GitHub repo.** ChaosLab reads the repository tree
-   and reconstructs a service topology — from `docker-compose.yml` when one
-   exists, or from real repo signals (manifest files, dependencies, a
-   `Dockerfile`) when it doesn't. See [Repository intake](#repository-intake--fallback-behavior).
-2. **You configure a scenario.** Target concurrent-user count and an
-   optional failure scenario (database latency spike, cache outage,
-   dependency timeout, traffic surge, instance loss).
-3. **A 4-stage agent pipeline runs, live.** Architecture interpretation →
-   deterministic capacity/failure simulation → bottleneck investigation
-   (with built-in self-verification against the evidence) → remediation.
-   Every stage streams to the client over Server-Sent Events as it
-   completes.
-4. **You get a report**, not a guess: the primary bottleneck, the
-   measured metrics that support it, the failure chain, and a concrete
-   remediation plan — each framed as an *estimate* from a deterministic
-   model, never as a certainty.
+Modern systems can fail long before they reach their theoretical maximum capacity.
 
-## Why the architecture is the way it is
+ChaosLab explores these failure points by combining:
 
-This isn't a chat UI wrapped around one LLM call. It's a deliberate split
-between two kinds of work, made visible in the product itself:
+* **Repository intelligence** to reconstruct system architecture
+* **Deterministic capacity modeling** to estimate system behavior under load
+* **Failure injection scenarios** to model common infrastructure failures
+* **Multi-agent LLM reasoning** to investigate bottlenecks
+* **Evidence-based verification** to prevent unsupported conclusions
+* **Real-time SSE streaming** to expose the pipeline as it executes
+* **Flutter MVVM frontend** for an interactive engineering workflow
 
-| | Handled by | Examples |
-|---|---|---|
-| **Reasoning** | LLM agents (LangGraph, Groq) | Interpreting the topology, ranking bottlenecks and explaining *why*, writing remediation steps |
-| **Computation** | A deterministic capacity model | Utilization %, latency, error rate, risk score — plain queueing-theory-style math, no LLM involved |
+The result is an engineering report that connects:
 
-The Investigator agent's claim about *why* a service is the bottleneck is
-never taken on faith — it's checked against the same evidence the model
-produced, with one bounded self-revision if the first answer doesn't hold
-up. That check is what "estimated risk" actually means here, instead of
-being a disclaimer bolted onto an LLM's opinion.
+**Repository → Architecture → Scenario → Simulation → Bottleneck → Failure Chain → Remediation**
 
-### The pipeline
+---
 
-```
-Architecture Agent  →  Simulation Agent  →  Investigator Agent  →  Remediation Agent
- (LLM, reads the        (deterministic:         (LLM, ranks             (LLM, turns
-  parsed topology)        traffic profile +       bottlenecks from        confirmed
-                           baseline capacity +     evidence, self-         findings into
-                           failure-scenario run)   verifies the top        concrete next
-                                                    claim against the      steps + report
-                                                    measured risk score)   narrative)
+## Why ChaosLab?
+
+Traditional LLM applications often follow:
+
+```text
+User Question → LLM → Answer
 ```
 
-Four stages, each with one clear job. This was previously a 7-node graph;
-three purely deterministic steps (traffic / capacity / failure) collapsed
-into one `simulation_agent` pass, and a separate `critic_agent` — which was
-already a deterministic evidence check, not a second LLM opinion — now runs
-inline inside `investigator_agent` as a bounded self-verification step.
-Same math, same guarantees, fewer redundant hops. Full rationale in
-[`backend/app/agents/graph.py`](backend/app/agents/graph.py).
+ChaosLab deliberately separates **reasoning** from **computation**.
 
-Every hand-off streams to the Flutter client over SSE
-(`GET /api/v1/simulation/stream/{id}`) as it happens, so the live pipeline
-view shows agents actually completing in sequence rather than one opaque
-spinner.
-
-## Repository intake & fallback behavior
-
-Most real repositories don't ship a `docker-compose.yml`. ChaosLab handles
-that without falling back to a fixed, made-up template:
-
-- **Compose file found** → parsed directly into services, dependency
-  edges, resource limits, and replica counts.
-- **No compose file** → the repository tree is scanned for real signals:
-  manifest files (`package.json`, `requirements.txt`, `go.mod`, `Gemfile`,
-  `pom.xml`, ...), a `Dockerfile`, and dependency names inside those
-  manifests (`pg`, `redis`, `celery`, `mongoose`, ...). A database, cache,
-  queue, or search node is only added if a concrete dependency signal
-  backs it — a frontend-only repo correctly infers a single gateway-served
-  node instead of an invented backend.
-- **Nothing recognizable found** → a single generic service node, clearly
-  labeled as unconfirmed.
-
-Every fallback architecture is returned with `used_fallback: true` and a
-`fallback_reason` explaining exactly what was detected, and the UI always
-presents it as editable, not as verified ground truth.
-
-## Stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| Agent orchestration | LangGraph | Explicit, typed state graph — not just a linear prompt chain |
-| LLM | Groq (Llama 3.3 70B) | Free tier, very low latency — a good fit for a pipeline making several calls per run |
-| Backend | FastAPI | Async, SSE-friendly, Pydantic schemas double as the API contract |
-| Frontend | Flutter (MVVM) | `provider` + plain `ChangeNotifier`, `dio` for HTTP, a hand-rolled SSE client |
-| Repo intake | GitHub REST API + PyYAML | Parses `docker-compose.yml`; infers a fallback architecture from repo signals when none exists |
-
-## Project layout
-
+```text
+                    ┌─────────────────────┐
+                    │   GitHub Repository │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Architecture Agent  │
+                    │   LLM Reasoning     │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Simulation Engine   │
+                    │ Deterministic Math  │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Investigator Agent  │
+                    │ Evidence + Analysis │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Remediation Agent   │
+                    │ Engineering Actions │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   Final Report      │
+                    └─────────────────────┘
 ```
+
+LLMs handle interpretation and reasoning.
+
+The deterministic simulation engine handles measurable calculations such as:
+
+* Service utilization
+* Estimated latency
+* Estimated error rate
+* Capacity pressure
+* Failure impact
+* Risk scoring
+
+This separation makes the system easier to reason about, test, and explain.
+
+---
+
+## Key Engineering Highlights
+
+### 1. Repository-to-Architecture Reconstruction
+
+ChaosLab accepts a public GitHub repository and attempts to reconstruct its architecture from actual repository evidence.
+
+When a `docker-compose.yml` exists, ChaosLab extracts:
+
+* Services
+* Dependencies
+* Network relationships
+* Resource limits
+* Replica counts
+
+When Compose is unavailable, the system analyzes repository signals such as:
+
+* `package.json`
+* `requirements.txt`
+* `go.mod`
+* `Gemfile`
+* `pom.xml`
+* `Dockerfile`
+* Database dependencies
+* Cache dependencies
+* Queue dependencies
+* Search infrastructure
+
+The system only introduces infrastructure components when supported by repository evidence.
+
+This avoids blindly generating a standard architecture template.
+
+---
+
+### 2. Deterministic Capacity Simulation
+
+The simulation engine is intentionally separate from the LLM layer.
+
+Given the reconstructed architecture and target scenario, ChaosLab models:
+
+```text
+Traffic
+   ↓
+Service Capacity
+   ↓
+Utilization
+   ↓
+Latency / Errors
+   ↓
+Failure Propagation
+   ↓
+Risk
+```
+
+The model produces estimated metrics that downstream agents can reason over.
+
+The same inputs produce the same simulation results, making the computation reproducible and independently testable.
+
+---
+
+### 3. Multi-Agent LangGraph Pipeline
+
+ChaosLab uses a typed LangGraph workflow with four specialized stages.
+
+| Stage              | Responsibility                       | Type                             |
+| ------------------ | ------------------------------------ | -------------------------------- |
+| Architecture Agent | Interpret repository topology        | LLM                              |
+| Simulation Agent   | Execute capacity/failure model       | Deterministic                    |
+| Investigator Agent | Identify and verify bottlenecks      | LLM + deterministic verification |
+| Remediation Agent  | Generate engineering recommendations | LLM                              |
+
+Each agent has a clearly defined responsibility rather than relying on a single general-purpose prompt.
+
+---
+
+### 4. Evidence-Based Investigation
+
+The Investigator does not simply accept an LLM-generated bottleneck.
+
+Its conclusion is checked against the simulation evidence.
+
+Conceptually:
+
+```text
+LLM Claim
+    │
+    ▼
+Measured Simulation Evidence
+    │
+    ├── Supports claim ──→ Continue
+    │
+    └── Contradicts claim → Bounded revision
+```
+
+This creates a controlled feedback loop where reasoning remains grounded in the deterministic simulation output.
+
+---
+
+### 5. Real-Time Agent Execution
+
+The backend exposes the simulation through Server-Sent Events.
+
+```http
+GET /api/v1/simulation/stream/{simulation_id}
+```
+
+The Flutter client receives agent progress as the pipeline executes:
+
+```text
+Architecture
+      ↓
+Simulation
+      ↓
+Investigation
+      ↓
+Remediation
+      ↓
+Final Report
+```
+
+This makes the multi-agent workflow observable rather than hiding the entire process behind a single loading state.
+
+---
+
+## Example Scenario
+
+A user submits:
+
+```text
+Repository:
+github.com/example/production-api
+
+Scenario:
+Traffic increases from 100K to 10M users.
+
+Failure scenario:
+Database latency increases by 300%.
+```
+
+ChaosLab performs:
+
+```text
+1. Inspect repository
+        ↓
+2. Reconstruct architecture
+        ↓
+3. Define workload
+        ↓
+4. Run deterministic simulation
+        ↓
+5. Measure service pressure
+        ↓
+6. Investigate highest-risk component
+        ↓
+7. Verify conclusion against simulation evidence
+        ↓
+8. Generate remediation plan
+```
+
+The resulting report can identify:
+
+* Primary bottleneck
+* Estimated utilization
+* Estimated latency impact
+* Estimated error impact
+* Failure propagation chain
+* Supporting evidence
+* Recommended remediation steps
+
+---
+
+## Repository Intelligence
+
+ChaosLab supports two architecture discovery paths.
+
+### Path A — Docker Compose
+
+```text
+docker-compose.yml
+        ↓
+Services
+        ↓
+Dependencies
+        ↓
+Resources / Replicas
+        ↓
+ArchitectureGraph
+```
+
+### Path B — Repository Signal Analysis
+
+For repositories without Compose:
+
+```text
+Repository Tree
+      ↓
+Manifest Detection
+      ↓
+Dependency Detection
+      ↓
+Infrastructure Signals
+      ↓
+ArchitectureGraph
+```
+
+For example, a repository containing:
+
+```text
+package.json
+Dockerfile
+redis dependency
+postgres dependency
+```
+
+can provide evidence for an architecture containing application, cache, and database components.
+
+A repository without recognizable infrastructure signals is instead represented as a generic service and explicitly marked as unconfirmed.
+
+Every inferred architecture contains:
+
+```text
+used_fallback
+fallback_reason
+```
+
+so users can distinguish repository evidence from inference.
+
+---
+
+## Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                         Flutter Client                      │
+│                         MVVM Architecture                   │
+└────────────────────────────┬────────────────────────────────┘
+                             │ HTTP / SSE
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                         FastAPI API                         │
+├─────────────────────────────────────────────────────────────┤
+│ Repository Inspection │ Simulation │ Streaming │ Reporting │
+└───────────────┬───────────────────────┬─────────────────────┘
+                │                       │
+                ▼                       ▼
+      ┌─────────────────┐     ┌─────────────────────┐
+      │ GitHub REST API │     │ Deterministic Model │
+      └─────────────────┘     └──────────┬──────────┘
+                                         │
+                                         ▼
+                              ┌──────────────────────┐
+                              │     LangGraph        │
+                              │                      │
+                              │ Architecture Agent   │
+                              │ Simulation Agent     │
+                              │ Investigator Agent   │
+                              │ Remediation Agent    │
+                              └──────────┬───────────┘
+                                         │
+                                         ▼
+                                   Final Report
+```
+
+---
+
+## Technology Stack
+
+| Area                  | Technology                 |
+| --------------------- | -------------------------- |
+| Frontend              | Flutter                    |
+| Frontend Architecture | MVVM + ChangeNotifier      |
+| Backend               | FastAPI                    |
+| API Validation        | Pydantic                   |
+| Agent Orchestration   | LangGraph                  |
+| LLM                   | Groq / Llama 3.3 70B       |
+| Repository Analysis   | GitHub REST API            |
+| Configuration Parsing | PyYAML                     |
+| Streaming             | Server-Sent Events         |
+| HTTP Client           | Dio                        |
+| Language              | Python + Dart              |
+| Storage               | In-memory simulation store |
+| License               | MIT                        |
+
+---
+
+## API
+
+ChaosLab uses explicitly namespaced API routes.
+
+| Method | Endpoint                         | Description                                  |
+| ------ | -------------------------------- | -------------------------------------------- |
+| `GET`  | `/api/v1/system/pulse`           | Backend liveness and AI configuration status |
+| `POST` | `/api/v1/repository/inspect`     | Inspect a public GitHub repository           |
+| `POST` | `/api/v1/simulation/execute`     | Start a simulation                           |
+| `GET`  | `/api/v1/simulation/stream/{id}` | Stream live pipeline events                  |
+| `GET`  | `/api/v1/simulation/report/{id}` | Retrieve simulation report                   |
+
+---
+
+## Project Structure
+
+```text
 chaoslab/
-  backend/             FastAPI + LangGraph — see backend/README.md
-  frontend/
-    chaoslab_flutter/  Flutter MVVM client — see frontend/chaoslab_flutter/README.md
+│
+├── backend/
+│   ├── app/
+│   │   ├── agents/
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── models/
+│   │   ├── services/
+│   │   └── main.py
+│   │
+│   └── README.md
+│
+├── frontend/
+│   └── chaoslab_flutter/
+│       ├── lib/
+│       └── README.md
+│
+└── README.md
 ```
 
-## Running it end to end
+---
+
+## Getting Started
+
+### Prerequisites
+
+* Python 3.10+
+* Flutter SDK
+* Git
+* A public GitHub repository for analysis
+* Optional: Groq API key
+
+### 1. Clone
 
 ```bash
-# 1. Backend
-cd backend
-python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env   # optionally add a free Groq key — runs fine without one, see below
-uvicorn app.main:app --reload --port 8000
+git clone https://github.com/jayant132/CAOSLab.git
+cd CAOSLab
+```
 
-# 2. Frontend (separate terminal)
+### 2. Start the Backend
+
+```bash
+cd backend
+
+python3 -m venv venv
+source venv/bin/activate
+
+pip install -r requirements.txt
+
+cp .env.example .env
+
+uvicorn app.main:app --reload --port 8000
+```
+
+### 3. Start the Flutter Client
+
+In another terminal:
+
+```bash
 cd frontend/chaoslab_flutter
-flutter create . --platforms=android,ios,web
+
 flutter pub get
+
 flutter run
 ```
 
-The backend runs with zero API keys out of the box: every reasoning agent
-has a deterministic stub fallback when `GROQ_API_KEY` isn't set, so the
-full 4-agent pipeline and final report work immediately. Add a free key
-from https://console.groq.com/keys when you want the agents reasoning in
-natural language instead of following fixed rules.
+---
 
-> **A note on scope, worth reading before you judge the risk numbers:**
-> ChaosLab does not spin up real infrastructure or run live load tests
-> against a deployed target. `capacity_model.py` is a deterministic,
-> queueing-theory-style model — real capacity-planning math, just not a
-> live measurement — which is exactly why every number in the report is
-> worded as *estimated*, never as a certainty. See
-> [`backend/README.md`](backend/README.md#an-important-scoping-note-say-this-out-loud-in-interviews)
-> for the full reasoning.
+## AI Configuration
 
-## API surface
+ChaosLab can run without an external LLM API key.
 
-Deliberately namespaced, no generic `/health` or `/run`:
+When `GROQ_API_KEY` is not configured, the reasoning stages use deterministic fallback behavior so the complete pipeline remains executable.
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET`  | `/api/v1/system/pulse` | Liveness + whether Groq is configured |
-| `POST` | `/api/v1/repository/inspect` | Public GitHub URL → parsed `ArchitectureGraph` |
-| `POST` | `/api/v1/simulation/execute` | Launch the agent pipeline, returns a `simulation_id` immediately |
-| `GET`  | `/api/v1/simulation/stream/{simulation_id}` | Server-Sent Events: live agent activity, ends with a `final_report` event |
-| `GET`  | `/api/v1/simulation/report/{simulation_id}` | One-shot poll for the current/final report (fallback if SSE drops) |
+To enable LLM-powered reasoning:
 
-Full endpoint and module documentation: [`backend/README.md`](backend/README.md).
-Frontend architecture and screen-by-screen notes: [`frontend/chaoslab_flutter/README.md`](frontend/chaoslab_flutter/README.md).
+```env
+GROQ_API_KEY=your_key_here
+```
 
-## Roadmap / known scope boundaries
+Groq API keys can be configured through the Groq developer console.
 
-- No auth on the API — this is a single-user portfolio/demo backend, not
-  a multi-tenant service. Adding auth would touch `core/config.py` and the
-  routers, not the agent pipeline.
-- `store/simulation_store.py` is in-memory by design; swapping it for
-  Redis/Postgres is a contained change if this ever needs to survive a
-  restart or run multi-process.
-- Public repos only — no OAuth flow for private repositories yet.
+---
+
+## Important Scope Boundary
+
+ChaosLab is a **capacity simulation and architecture reasoning platform**, not a production load-testing system.
+
+It does not:
+
+* Deploy infrastructure
+* Generate real production traffic
+* Benchmark a live deployment
+* Measure real-world latency from physical infrastructure
+* Guarantee that predicted capacity matches production behavior
+
+Instead, ChaosLab uses a deterministic queueing-style capacity model to produce **engineering estimates** from the reconstructed architecture and selected scenario.
+
+This distinction is intentional.
+
+The platform is designed to demonstrate how **repository intelligence, deterministic modeling, and LLM-based reasoning can be combined into an auditable engineering workflow**.
+
+---
+
+## Engineering Decisions
+
+### Why LangGraph?
+
+LangGraph provides explicit state and control flow for multi-step agent workflows.
+
+This makes the pipeline easier to:
+
+* Trace
+* Test
+* Extend
+* Stream
+* Debug
+* Control
+
+### Why deterministic simulation?
+
+LLMs are useful for reasoning but should not be responsible for producing critical numerical calculations.
+
+Separating simulation from reasoning makes the numerical layer:
+
+* Reproducible
+* Testable
+* Explainable
+* Independent of model behavior
+
+### Why SSE?
+
+Simulation is inherently asynchronous.
+
+SSE allows the frontend to receive pipeline events without repeatedly polling the backend.
+
+### Why Flutter?
+
+Flutter provides a single cross-platform client while allowing the simulation workflow to be represented as an interactive engineering dashboard.
+
+---
+
+## Current Limitations
+
+ChaosLab is currently a portfolio/demo system with intentionally limited infrastructure.
+
+* Public GitHub repositories only
+* No GitHub OAuth/private repository support
+* No authentication layer
+* In-memory simulation storage
+* No distributed job queue
+* No persistent simulation history
+* No real infrastructure provisioning
+* No live load testing
+
+These are architectural boundaries rather than hidden assumptions.
+
+---
+
+## Future Improvements
+
+Potential production extensions include:
+
+* GitHub OAuth and private repository analysis
+* Persistent PostgreSQL/Redis storage
+* Distributed simulation workers
+* Kubernetes topology discovery
+* OpenTelemetry integration
+* Real load-test integration
+* Historical simulation comparison
+* Persistent architecture graphs
+* Authentication and multi-tenancy
+* Cloud infrastructure modeling
+* Cost estimation
+* Production observability integrations
+
+---
+
+## What This Project Demonstrates
+
+ChaosLab combines several areas of modern software engineering:
+
+**AI Engineering**
+
+* LangGraph
+* Multi-agent workflows
+* LLM orchestration
+* Evidence-grounded reasoning
+* Bounded self-verification
+
+**Backend Engineering**
+
+* FastAPI
+* Async processing
+* SSE streaming
+* Pydantic contracts
+* API design
+
+**Systems Engineering**
+
+* Architecture reconstruction
+* Capacity modeling
+* Bottleneck analysis
+* Failure propagation
+* Resilience planning
+
+**Frontend Engineering**
+
+* Flutter
+* MVVM
+* Reactive state management
+* Real-time pipeline visualization
+
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
+
+---
+
+### Built as an exploration of AI-assisted systems engineering
+
+ChaosLab is designed around a simple engineering principle:
+
+> **Use AI to reason about systems, but use deterministic computation to measure them.**
